@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options/util"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 	"golang.org/x/sync/errgroup"
 )
@@ -25,17 +27,14 @@ type Opts struct {
 	// Handler is the http.Handler to be used to serve http pages by the server.
 	Handler http.Handler
 
-	// HTTPAddress is the address the HTTP server should listen on.
-	HTTPAddress string
+	// BindAddress is the address the HTTP server should listen on.
+	BindAddress string
 
-	// HTTPSAddress is the address the HTTPS server should listen on.
-	HTTPSAddress string
+	// SecureBindAddress is the address the HTTPS server should listen on.
+	SecureBindAddress string
 
-	// TLSCertFile is the filename of the certificate file for the HTTPS server.
-	TLSCertFile string
-
-	// TLSKeyFile is the filename of the key file for the HTTPS server.
-	TLSKeyFile string
+	// TLS is the TLS configuration for the server.
+	TLS *options.TLS
 }
 
 // NewServer creates a new Server from the options given.
@@ -62,16 +61,16 @@ type server struct {
 }
 
 // setupListener sets the server listener if the HTTP server is enabled.
-// The HTTP server can be disabled by setting the HTTPAddress to "-" or by
+// The HTTP server can be disabled by setting the BindAddress to "-" or by
 // leaving it empty.
 func (s *server) setupListener(opts Opts) error {
-	if opts.HTTPAddress == "" || opts.HTTPAddress == "-" {
+	if opts.BindAddress == "" || opts.BindAddress == "-" {
 		// No HTTP listener required
 		return nil
 	}
 
-	networkType := getNetworkScheme(opts.HTTPAddress)
-	listenAddr := getListenAddress(opts.HTTPAddress)
+	networkType := getNetworkScheme(opts.BindAddress)
+	listenAddr := getListenAddress(opts.BindAddress)
 
 	listener, err := net.Listen(networkType, listenAddr)
 	if err != nil {
@@ -83,10 +82,10 @@ func (s *server) setupListener(opts Opts) error {
 }
 
 // setupTLSListener sets the server TLS listener if the HTTPS server is enabled.
-// The HTTPS server can be disabled by setting the HTTPSAddress to "-" or by
+// The HTTPS server can be disabled by setting the SecureBindAddress to "-" or by
 // leaving it empty.
 func (s *server) setupTLSListener(opts Opts) error {
-	if opts.HTTPSAddress == "" || opts.HTTPSAddress == "-" {
+	if opts.SecureBindAddress == "" || opts.SecureBindAddress == "-" {
 		// No HTTPS listener required
 		return nil
 	}
@@ -96,15 +95,17 @@ func (s *server) setupTLSListener(opts Opts) error {
 		MaxVersion: tls.VersionTLS13,
 		NextProtos: []string{"http/1.1"},
 	}
-	cert, err := tls.LoadX509KeyPair(opts.TLSCertFile, opts.TLSKeyFile)
-	if err != nil {
-		return fmt.Errorf("could not load TLS certificates (%s, %s): %v", opts.TLSCertFile, opts.TLSKeyFile, err)
+	if opts.TLS != nil {
+		cert, err := getCertificate(opts.TLS)
+		if err != nil {
+			return fmt.Errorf("could not load certificate: %v", err)
+		}
+		config.Certificates = []tls.Certificate{cert}
 	}
-	config.Certificates = []tls.Certificate{cert}
 
-	listener, err := net.Listen("tcp", opts.HTTPSAddress)
+	listener, err := net.Listen("tcp", opts.SecureBindAddress)
 	if err != nil {
-		return fmt.Errorf("listen (%s) failed: %v", opts.HTTPSAddress, err)
+		return fmt.Errorf("listen (%s) failed: %v", opts.SecureBindAddress, err)
 	}
 
 	s.tlsListener = tls.NewListener(tcpKeepAliveListener{listener.(*net.TCPListener)}, config)
@@ -184,6 +185,26 @@ func getNetworkScheme(addr string) string {
 func getListenAddress(addr string) string {
 	slice := strings.SplitN(addr, "//", 2)
 	return slice[len(slice)-1]
+}
+
+// getCertificate loads the certificate data from the TLS config.
+func getCertificate(opts *options.TLS) (tls.Certificate, error) {
+	keyData, err := util.GetSecretValue(opts.Key)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("could not load key data: %v", err)
+	}
+
+	certData, err := util.GetSecretValue(opts.Cert)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("could not load cert data: %v", err)
+	}
+
+	cert, err := tls.X509KeyPair(certData, keyData)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("could not parse certificate data: %v", err)
+	}
+
+	return cert, nil
 }
 
 // tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
