@@ -258,19 +258,10 @@ func (p *OAuthProxy) Start() error {
 
 func (p *OAuthProxy) setupServer(opts *options.Options) error {
 	serverOpts := proxyhttp.Opts{
-		Handler:      p,
-		HTTPAddress:  opts.HTTPAddress,
-		HTTPSAddress: opts.HTTPSAddress,
-		TLSCertFile:  opts.TLSCertFile,
-		TLSKeyFile:   opts.TLSKeyFile,
-	}
-
-	// Preserve backwards compatibility, only start one server
-	// TODO(@JoelSpeed): Move this into legacyOptions conversion.
-	if serverOpts.TLSCertFile != "" || serverOpts.TLSKeyFile != "" {
-		serverOpts.HTTPAddress = ""
-	} else {
-		serverOpts.HTTPSAddress = ""
+		Handler:           p,
+		BindAddress:       opts.Server.BindAddress,
+		SecureBindAddress: opts.Server.SecureBindAddress,
+		TLS:               opts.Server.TLS,
 	}
 
 	appServer, err := proxyhttp.NewServer(serverOpts)
@@ -279,8 +270,10 @@ func (p *OAuthProxy) setupServer(opts *options.Options) error {
 	}
 
 	metricsServer, err := proxyhttp.NewServer(proxyhttp.Opts{
-		Handler:     middleware.DefaultMetricsHandler,
-		HTTPAddress: opts.MetricsAddress,
+		Handler:           middleware.DefaultMetricsHandler,
+		BindAddress:       opts.MetricsServer.BindAddress,
+		SecureBindAddress: opts.MetricsServer.BindAddress,
+		TLS:               opts.MetricsServer.TLS,
 	})
 	if err != nil {
 		return fmt.Errorf("could not build metrics server: %v", err)
@@ -297,9 +290,9 @@ func buildPreAuthChain(opts *options.Options) (alice.Chain, error) {
 	chain := alice.New(middleware.NewScope(opts.ReverseProxy))
 
 	if opts.ForceHTTPS {
-		_, httpsPort, err := net.SplitHostPort(opts.HTTPSAddress)
+		_, httpsPort, err := net.SplitHostPort(opts.Server.SecureBindAddress)
 		if err != nil {
-			return alice.Chain{}, fmt.Errorf("invalid HTTPS address %q: %v", opts.HTTPAddress, err)
+			return alice.Chain{}, fmt.Errorf("invalid HTTPS address %q: %v", opts.Server.SecureBindAddress, err)
 		}
 		chain = chain.Append(middleware.NewRedirectToHTTPS(httpsPort))
 	}
