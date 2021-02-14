@@ -449,6 +449,12 @@ func (l LegacyServer) convert() (Server, Server) {
 				FromFile: l.TLSCertFile,
 			},
 		}
+		// Preserve backwards compatibility, only run one server
+		appServer.BindAddress = ""
+	} else {
+		// Disable the HTTPS server if there's no certificates.
+		// This preserves backwards compatibility.
+		appServer.SecureBindAddress = ""
 	}
 
 	metricsServer := Server{

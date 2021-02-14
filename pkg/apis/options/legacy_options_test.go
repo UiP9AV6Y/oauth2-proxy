@@ -107,8 +107,7 @@ var _ = Describe("Legacy Options", func() {
 			opts.InjectResponseHeaders = []Header{}
 
 			opts.Server = Server{
-				BindAddress:       "127.0.0.1:4180",
-				SecureBindAddress: ":443",
+				BindAddress: "127.0.0.1:4180",
 			}
 
 			converted, err := legacyOpts.ToOptions()
