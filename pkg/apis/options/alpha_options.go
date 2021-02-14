@@ -28,6 +28,10 @@ type AlphaOptions struct {
 	// Headers may source values from either the authenticated user's session
 	// or from a static secret value.
 	InjectResponseHeaders []Header `json:"injectResponseHeaders,omitempty"`
+
+	Server Server `json:"server,omitempty"`
+
+	MetricsServer Server `json:"metricsServer,omitempty"`
 }
 
 // MergeInto replaces alpha options in the Options struct with the values
@@ -36,6 +40,8 @@ func (a *AlphaOptions) MergeInto(opts *Options) {
 	opts.UpstreamServers = a.Upstreams
 	opts.InjectRequestHeaders = a.InjectRequestHeaders
 	opts.InjectResponseHeaders = a.InjectResponseHeaders
+	opts.Server = a.Server
+	opts.MetricsServer = a.MetricsServer
 }
 
 // ExtractFrom populates the fields in the AlphaOptions with the values from
@@ -44,4 +50,6 @@ func (a *AlphaOptions) ExtractFrom(opts *Options) {
 	a.Upstreams = opts.UpstreamServers
 	a.InjectRequestHeaders = opts.InjectRequestHeaders
 	a.InjectResponseHeaders = opts.InjectResponseHeaders
+	a.Server = opts.Server
+	a.MetricsServer = opts.MetricsServer
 }
