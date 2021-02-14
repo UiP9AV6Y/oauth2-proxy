@@ -2341,6 +2341,11 @@ func baseTestOptions() *options.Options {
 			},
 		},
 	}
+
+	// Disable the application HTTP(S) server
+	opts.HTTPAddress = ""
+	opts.HTTPSAddress = ""
+
 	return opts
 }
 

@@ -8,8 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/justinas/alice"
@@ -21,6 +24,7 @@ import (
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/authentication/basic"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/cookies"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/encryption"
+	proxyhttp "github.com/oauth2-proxy/oauth2-proxy/v7/pkg/http"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/ip"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/middleware"
@@ -102,6 +106,7 @@ type OAuthProxy struct {
 	headersChain alice.Chain
 	preAuthChain alice.Chain
 	pageWriter   pagewriter.Writer
+	server       proxyhttp.Server
 }
 
 // NewOAuthProxy creates a new instance of OAuthProxy from the options provided
@@ -183,7 +188,7 @@ func NewOAuthProxy(opts *options.Options, validator func(string) bool) (*OAuthPr
 		return nil, fmt.Errorf("could not build headers chain: %v", err)
 	}
 
-	return &OAuthProxy{
+	p := &OAuthProxy{
 		CookieName:     opts.Cookie.Name,
 		CSRFCookieName: fmt.Sprintf("%v_%v", opts.Cookie.Name, "csrf"),
 		CookieSeed:     opts.Cookie.Secret,
@@ -222,7 +227,67 @@ func NewOAuthProxy(opts *options.Options, validator func(string) bool) (*OAuthPr
 		headersChain:       headersChain,
 		preAuthChain:       preAuthChain,
 		pageWriter:         pageWriter,
-	}, nil
+	}
+
+	if err := p.setupServer(opts); err != nil {
+		return nil, fmt.Errorf("error setting up server: %v", err)
+	}
+
+	return p, nil
+}
+
+func (p *OAuthProxy) Start() error {
+	if p.server == nil {
+		// We have to call setupServer before Start is called.
+		// If this doesn't happen it's a programming error.
+		panic("server has not been initialised")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Observe signals in background goroutine.
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
+		<-sigint
+		cancel() // cancel the context
+	}()
+
+	return p.server.Start(ctx)
+}
+
+func (p *OAuthProxy) setupServer(opts *options.Options) error {
+	serverOpts := proxyhttp.Opts{
+		Handler:      p,
+		HTTPAddress:  opts.HTTPAddress,
+		HTTPSAddress: opts.HTTPSAddress,
+		TLSCertFile:  opts.TLSCertFile,
+		TLSKeyFile:   opts.TLSKeyFile,
+	}
+
+	// Preserve backwards compatibility, only start one server
+	// TODO(@JoelSpeed): Move this into legacyOptions conversion.
+	if serverOpts.TLSCertFile != "" || serverOpts.TLSKeyFile != "" {
+		serverOpts.HTTPAddress = ""
+	} else {
+		serverOpts.HTTPSAddress = ""
+	}
+
+	appServer, err := proxyhttp.NewServer(serverOpts)
+	if err != nil {
+		return fmt.Errorf("could not build app server: %v", err)
+	}
+
+	metricsServer, err := proxyhttp.NewServer(proxyhttp.Opts{
+		Handler:     middleware.DefaultMetricsHandler,
+		HTTPAddress: opts.MetricsAddress,
+	})
+	if err != nil {
+		return fmt.Errorf("could not build metrics server: %v", err)
+	}
+
+	p.server = proxyhttp.NewServerGroup(appServer, metricsServer)
+	return nil
 }
 
 // buildPreAuthChain constructs a chain that should process every request before
